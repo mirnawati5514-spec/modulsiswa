@@ -234,9 +234,20 @@ td { border-top: 1px solid #f0f1f6; padding: 13px; font-size: 12px; }
 .student-identity-panel p { margin: 0 0 4px; font-size: 12px; font-weight: 700; }
 .student-identity-panel small { color: var(--muted); font-size: 10px; }
 .student-qr-large { width: 180px; height: 180px; margin-left: auto; }
-.home-qr-panel { margin: 18px 0 25px; }
-.home-qr-copy { display: grid; gap: 7px; }
-.home-qr-copy .secondary-button { justify-self: start; margin-top: 5px; }
+.home-qr-panel { justify-content: space-between; margin: 18px 0 25px; border: 1px solid #e6e2ff; border-left: 4px solid var(--purple); padding: 20px 24px; background: linear-gradient(110deg, #fff 0%, #f8f7ff 100%); }
+.home-qr-copy { display: grid; flex: 1; align-content: center; justify-items: start; gap: 8px; }
+.home-qr-kicker { color: var(--purple); font-size: 10px; font-weight: 800; letter-spacing: 1.1px; }
+.home-qr-copy h3 { margin: 0; font-size: 18px; }
+.home-qr-copy p { margin: 0; }
+.home-qr-copy small { font-size: 11px; }
+.home-qr-open { margin-top: 5px; }
+.home-qr-download { margin-top: 2px; }
+.home-qr-code-action { display: grid; flex: 0 0 auto; justify-items: center; gap: 7px; border: 1px solid #e4e0fb; border-radius: 15px; padding: 10px; background: white; color: var(--purple); font-size: 10px; font-weight: 700; cursor: pointer; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }
+.home-qr-code-action:hover { transform: translateY(-2px); border-color: #b8aff5; box-shadow: 0 8px 20px #6658d91c; }
+.home-qr-code-action:focus-visible { outline: 3px solid #aaa1ef; outline-offset: 3px; }
+.home-qr-code-action img { display: block; width: 148px; height: 148px; border-radius: 7px; background: white; image-rendering: pixelated; }
+.home-qr-loading { display: grid; min-width: 168px; min-height: 168px; place-items: center; color: var(--muted); font-size: 11px; }
+.attendance-time-display { display: block; margin-top: 3px; color: var(--muted); font-size: 11px; }
 
 @media (max-width: 1050px) {
   .main { padding-right: 24px; padding-left: 24px; }
@@ -267,6 +278,9 @@ td { border-top: 1px solid #f0f1f6; padding: 13px; font-size: 12px; }
   .student-account-form { grid-template-columns: 1fr; }
   .student-account-form button { grid-column: auto; justify-self: stretch; }
   .student-qr-large { margin-left: 0; }
+  .home-qr-panel { gap: 16px; padding: 17px; }
+  .home-qr-copy { flex-basis: 100%; }
+  .home-qr-code-action { margin: 0 auto; }
   .toolbar { align-items: flex-start; }
   th, td { padding: 11px 9px; }
 }

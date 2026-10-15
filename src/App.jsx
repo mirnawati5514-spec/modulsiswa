@@ -27,6 +27,14 @@ const dateText = new Intl.DateTimeFormat("id-ID", {
 const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 const dayIndex = today.getDay();
 const todayName = dayIndex >= 1 && dayIndex <= 5 ? weekdays[dayIndex - 1] : "Senin";
+async function loadLocalAttendance() {
+  const records = await db.attendance.toArray();
+  return records.sort((first, second) => {
+    const firstTime = first.scannedAt || `${first.date}T00:00:00`;
+    const secondTime = second.scannedAt || `${second.date}T00:00:00`;
+    return secondTime.localeCompare(firstTime);
+  });
+}
 const demoStudent = {
   id: "local-demo-student",
   role: "student",
@@ -79,7 +87,7 @@ function AuthenticatedApp({ user, isDemo }) {
         const loadedTasks = await db.tasks.orderBy("id").reverse().toArray();
         if (cancelled) return;
         setTasks(loadedTasks);
-        const serverRecords = isDemo ? await db.attendance.orderBy("date").reverse().toArray() : await fetchAttendanceFromServer();
+        const serverRecords = isDemo ? await loadLocalAttendance() : await fetchAttendanceFromServer();
         if (cancelled) return;
         setAttendanceRecords(serverRecords);
         setDbError("");
@@ -161,7 +169,7 @@ function AuthenticatedApp({ user, isDemo }) {
 
   async function refreshAttendance() {
     setAttendanceRecords(isDemo
-      ? await db.attendance.orderBy("date").reverse().toArray()
+      ? await loadLocalAttendance()
       : await fetchAttendanceFromServer());
   }
 
@@ -173,9 +181,15 @@ function AuthenticatedApp({ user, isDemo }) {
       }
       setIsSavingAttendance(true);
       try {
+        const scannedAt = new Date();
+        const scannedDate = `${scannedAt.getFullYear()}-${String(scannedAt.getMonth() + 1).padStart(2, "0")}-${String(scannedAt.getDate()).padStart(2, "0")}`;
+        const scannedDateText = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric" }).format(scannedAt);
+        const scannedTimeText = new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(scannedAt);
         await recordStudentAttendance({
-          date: dateKey,
-          displayDate: dateText,
+          date: scannedDate,
+          displayDate: scannedDateText,
+          time: scannedTimeText,
+          scannedAt: scannedAt.toISOString(),
           name: user.name,
           className: user.className,
           status: "Hadir",
@@ -183,7 +197,7 @@ function AuthenticatedApp({ user, isDemo }) {
         });
         await refreshAttendance();
         setDbError("");
-        setFeedback("Absensi HADIR berhasil dicatat pada perangkat ini.");
+        setFeedback(`✅ Tersimpan: HADIR — ${user.name} — ${scannedTimeText}`);
         return true;
       } catch (error) {
         setDbError(`Absensi tidak dapat dicatat: ${error.message}`);
@@ -429,21 +443,27 @@ function HomePage({ user, qrImage, availableBooks, attendanceCount, pendingTasks
         </div>
         <div className="welcome-art" aria-hidden="true">ðŸŽ’</div>
       </div>
+      <div className="panel student-identity-panel home-qr-panel">
+        <div className="home-qr-copy">
+          <span className="home-qr-kicker">ABSENSI SISWA</span>
+          <h3>Kartu QR Kehadiran</h3>
+          <p>{user.name} · {user.className}</p>
+          <small>Tunjukkan kode ini kepada petugas untuk mencatat kehadiran.</small>
+          <button className="primary-button home-qr-open" onClick={() => onNavigate("absensi")} type="button">Buka pemindai kamera</button>
+          {qrImage && <a className="text-link home-qr-download" href={qrImage} download={`qr-${user.username}.png`}>Unduh QR</a>}
+        </div>
+        {qrImage ? (
+          <button className="home-qr-code-action" onClick={() => onNavigate("absensi")} type="button" aria-label="Klik untuk membuka kamera pemindai absensi">
+            <img src={qrImage} alt={`Kode QR absensi ${user.name}`} />
+            <span>Klik untuk memindai</span>
+          </button>
+        ) : <div className="home-qr-loading">Membuat QR…</div>}
+      </div>
       <div className="stats">
         <StatCard icon="ðŸ“š" color="purple" value={availableBooks} label="Buku tersedia" />
         <StatCard icon="âœ…" color="teal" value={attendanceCount} label="Catatan absensi" />
         <StatCard icon="ðŸ“" color="orange" value={pendingTasks} label="Tugas belum selesai" />
         <StatCard icon="ðŸ“¢" color="blue" value={announcements.length} label="Pengumuman" />
-      </div>
-      <div className="panel student-identity-panel home-qr-panel">
-        <div className="home-qr-copy">
-          <h3>QR Absensi Siswa</h3>
-          <p>{user.name} · {user.className}</p>
-          <small>Tunjukkan QR ini kepada petugas saat hadir di sekolah.</small>
-          <button className="secondary-button" onClick={() => onNavigate("absensi")} type="button">Buka menu Absensi</button>
-        </div>
-        {qrImage ? <img className="student-qr student-qr-large" src={qrImage} alt={`Kode QR ${user.name}`} /> : <span>Membuat QR…</span>}
-        {qrImage && <a className="text-link" href={qrImage} download={`qr-${user.username}.png`}>Unduh QR</a>}
       </div>
       <div className="section-title">
         <div>
@@ -674,15 +694,15 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
       <div className="panel">
         <div className="table-wrap">
           <table>
-            <thead><tr><th>TANGGAL</th>{isAdmin && <th>NAMA SISWA</th>}<th>KELAS</th><th>STATUS</th><th>KETERANGAN</th></tr></thead>
+            <thead><tr><th>TANGGAL &amp; WAKTU</th>{isAdmin && <th>NAMA SISWA</th>}<th>KELAS</th><th>STATUS</th><th>KETERANGAN</th></tr></thead>
             <tbody>
               {records.length ? records.map((record) => (
                 <tr key={record.id}>
-                  <td>{record.displayDate || record.date}</td>
+                  <td><div>{record.displayDate || record.date}</div>{record.time && <small className="attendance-time-display">{record.time}</small>}</td>
                   {isAdmin && <td>{record.name}</td>}
                   <td>{record.className}</td>
                   <td><span className={`badge ${record.status.toLowerCase()}`}>{record.status}</span></td>
-                  <td>{record.proofName ? <div className="attendance-proof-history"><span>{record.note}</span><a href={record.proofUrl || undefined} target="_blank" rel="noreferrer">{record.proofName}</a></div> : "—"}</td>
+                  <td>{record.proofName ? <div className="attendance-proof-history"><span>{record.note}</span><a href={record.proofUrl || undefined} target="_blank" rel="noreferrer">{record.proofName}</a></div> : record.note || "—"}</td>
                 </tr>
               )) : <tr><td className="empty-state" colSpan={isAdmin ? 5 : 4}>Belum ada catatan absensi.</td></tr>}
             </tbody>
