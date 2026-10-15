@@ -55,6 +55,11 @@ function AuthenticatedApp({ user, isDemo }) {
   const [feedback, setFeedback] = useState("");
   const [isSavingAttendance, setIsSavingAttendance] = useState(false);
   const [qrImages, setQrImages] = useState({});
+  useEffect(() => {
+    if (!feedback) return undefined;
+    const timer = window.setTimeout(() => setFeedback(""), 2600);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
   const handleQrImage = useCallback((code, image) => {
     setQrImages((current) => current[code] ? current : ({ ...current, [code]: image }));
   }, []);
@@ -529,7 +534,6 @@ function SchedulePage({ activeDay, onSelectDay }) {
 }
 
 function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidationError, qrImages, onQrImage, isSaving, dbReady, isLocalOnly }) {
-  const [scanCode, setScanCode] = useState("");
   const [absenceStatus, setAbsenceStatus] = useState("Sakit");
   const [absenceNote, setAbsenceNote] = useState("");
   const [proofFile, setProofFile] = useState(null);
@@ -537,8 +541,9 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
   const videoRef = useRef(null);
   const scanHandlerRef = useRef(onScanCode);
   scanHandlerRef.current = onScanCode;
-  const [cameraActive, setCameraActive] = useState(false);
+  const [cameraActive, setCameraActive] = useState(true);
   const [cameraError, setCameraError] = useState("");
+  const processingScanRef = useRef(false);
   const isAdmin = user.role === "admin";
   const qrValue = user.attendanceCode;
 
@@ -553,16 +558,31 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
     if (!cameraActive) return undefined;
     let controls;
     let stopped = false;
+    let lastVisibleCode = "";
+    let lastVisibleAt = 0;
     setCameraError("");
     import("@zxing/browser").then(({ BrowserMultiFormatReader }) => {
       if (stopped) return;
       const reader = new BrowserMultiFormatReader();
       return reader.decodeFromConstraints({ video: { facingMode: { ideal: "environment" } } }, videoRef.current, (result) => {
-        if (!result || stopped) return;
-        stopped = true;
-        controls?.stop();
-        setCameraActive(false);
-        scanHandlerRef.current(result.getText());
+        if (stopped) return;
+        const now = Date.now();
+        if (!result) {
+          if (now - lastVisibleAt > 1200) lastVisibleCode = "";
+          return;
+        }
+        const code = result.getText().trim();
+        if (!code || processingScanRef.current) return;
+        if (code === lastVisibleCode && now - lastVisibleAt < 2500) {
+          lastVisibleAt = now;
+          return;
+        }
+        lastVisibleCode = code;
+        lastVisibleAt = now;
+        processingScanRef.current = true;
+        Promise.resolve(scanHandlerRef.current(code)).finally(() => {
+          processingScanRef.current = false;
+        });
       }).then((startedControls) => {
         controls = startedControls;
         if (stopped) controls.stop();
@@ -589,7 +609,7 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
           <span className="guide-icon" aria-hidden="true">▦</span>
           <div>
             <h3>Absensi digital dengan QR pribadi</h3>
-            <p>Pindai QR siswa untuk mencatat HADIR. Siswa juga dapat melihat kartu identitas digital dan riwayat absensi.</p>
+            <p>Kamera akan memindai QR otomatis. Saat QR dikenali, status HADIR langsung dicatat dan pemindai siap membaca QR berikutnya.</p>
           </div>
         </div>
       </div>
@@ -602,14 +622,6 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
           </div>
           {cameraError && <p className="camera-error" role="alert">{cameraError}</p>}
           {cameraActive && <video className="qr-camera" ref={videoRef} muted playsInline aria-label="Tampilan kamera pemindai QR" />}
-          <form className="scan-form" onSubmit={async (event) => {
-            event.preventDefault();
-            const recorded = await onScanCode(scanCode);
-            if (recorded) setScanCode("");
-          }}>
-            <input className="task-input" value={scanCode} onChange={(event) => setScanCode(event.target.value)} placeholder="Pindai QR USB atau masukkan kode" aria-label="Kode QR siswa" required />
-            <button className="primary-button" disabled={!dbReady || isSaving} type="submit">{isSaving ? "Mencatat..." : "Catat Hadir"}</button>
-          </form>
         </div>
       ) : (
         <div className="attendance-workflow">
@@ -626,14 +638,6 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
             </div>
             {cameraError && <p className="camera-error" role="alert">{cameraError}</p>}
             {cameraActive && <video className="qr-camera" ref={videoRef} muted playsInline aria-label="Tampilan kamera pemindai QR" />}
-            <form className="scan-form" onSubmit={async (event) => {
-              event.preventDefault();
-              const recorded = await onScanCode(scanCode);
-              if (recorded) setScanCode("");
-            }}>
-              <input className="task-input" value={scanCode} onChange={(event) => setScanCode(event.target.value)} placeholder="Pindai QR USB atau masukkan kode" aria-label="Kode QR siswa" required />
-              <button className="primary-button" disabled={!dbReady || isSaving} type="submit">{isSaving ? "Mencatat..." : "Catat Hadir"}</button>
-            </form>
           </div>
           <div className="panel workflow-panel">
             <div className="panel-heading"><h3>Kirim surat izin atau sakit</h3></div>
