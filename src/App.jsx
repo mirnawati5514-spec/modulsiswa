@@ -1,7 +1,7 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { db, initializeDatabase } from "./db.js";
+import { db, initializeDatabase, recordStudentAttendance } from "./db.js";
 import QRCode from "qrcode";
-import { createStudentOnServer, fetchAttendanceFromServer, fetchStudentsFromServer, getCurrentUser, login, logout, sendAttendanceToServer } from "./attendanceApi.js";
+import { createStudentOnServer, fetchAttendanceFromServer, fetchStudentsFromServer, sendAttendanceToServer } from "./attendanceApi.js";
 import { announcements, books, schedules, weekdays } from "./data.js";
 
 const pages = [
@@ -27,39 +27,21 @@ const dateText = new Intl.DateTimeFormat("id-ID", {
 const dateKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 const dayIndex = today.getDay();
 const todayName = dayIndex >= 1 && dayIndex <= 5 ? weekdays[dayIndex - 1] : "Senin";
+const demoStudent = {
+  id: "local-demo-student",
+  role: "student",
+  name: "Alya Putri",
+  className: "VII-A",
+  username: "alya.demo",
+  attendanceCode: "QR-VIIA-ALYA-01",
+};
+const localDemoEnabled = true;
 
 function App() {
-  const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState("");
-
-  useEffect(() => {
-    getCurrentUser()
-      .then(setUser)
-      .catch((error) => setAuthError(`Server login belum tersedia: ${error.message}`))
-      .finally(() => setAuthLoading(false));
-  }, []);
-
-  async function signIn(username, password) {
-    const signedInUser = await login(username, password);
-    setUser(signedInUser);
-    setAuthError("");
-  }
-
-  async function signOut() {
-    try {
-      await logout();
-    } finally {
-      setUser(null);
-    }
-  }
-
-  if (authLoading) return <div className="auth-loading">Memeriksa sesi masuk…</div>;
-  if (!user) return <LoginPage onLogin={signIn} serverMessage={authError} />;
-  return <AuthenticatedApp key={user.id} user={user} onLogout={signOut} />;
+  return <AuthenticatedApp key={demoStudent.id} user={demoStudent} isDemo={localDemoEnabled} />;
 }
 
-function AuthenticatedApp({ user, onLogout }) {
+function AuthenticatedApp({ user, isDemo }) {
   const [page, setPage] = useState("beranda");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeDay, setActiveDay] = useState(todayName);
@@ -78,6 +60,13 @@ function AuthenticatedApp({ user, onLogout }) {
   }, []);
 
   useEffect(() => {
+    if (!user.attendanceCode || qrImages[user.attendanceCode]) return;
+    QRCode.toDataURL(user.attendanceCode, { width: 220, margin: 1, errorCorrectionLevel: "M" })
+      .then((image) => handleQrImage(user.attendanceCode, image))
+      .catch(() => setDbError("Gambar QR tidak dapat dibuat."));
+  }, [user.attendanceCode, qrImages, handleQrImage]);
+
+  useEffect(() => {
     let cancelled = false;
     async function loadDatabase() {
       try {
@@ -85,7 +74,7 @@ function AuthenticatedApp({ user, onLogout }) {
         const loadedTasks = await db.tasks.orderBy("id").reverse().toArray();
         if (cancelled) return;
         setTasks(loadedTasks);
-        const serverRecords = await fetchAttendanceFromServer();
+        const serverRecords = isDemo ? await db.attendance.orderBy("date").reverse().toArray() : await fetchAttendanceFromServer();
         if (cancelled) return;
         setAttendanceRecords(serverRecords);
         setDbError("");
@@ -99,7 +88,7 @@ function AuthenticatedApp({ user, onLogout }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isDemo]);
 
   const currentPage = pages.find(([id]) => id === page);
   const filteredBooks = useMemo(() => {
@@ -166,10 +155,38 @@ function AuthenticatedApp({ user, onLogout }) {
   }
 
   async function refreshAttendance() {
-    setAttendanceRecords(await fetchAttendanceFromServer());
+    setAttendanceRecords(isDemo
+      ? await db.attendance.orderBy("date").reverse().toArray()
+      : await fetchAttendanceFromServer());
   }
 
   async function recordAttendance(attendanceCode, status, extra = {}) {
+    if (isDemo) {
+      if (status !== "Hadir" || attendanceCode?.trim() !== user.attendanceCode) {
+        setDbError("Kode QR tidak sesuai dengan kartu siswa contoh.");
+        return false;
+      }
+      setIsSavingAttendance(true);
+      try {
+        await recordStudentAttendance({
+          date: dateKey,
+          displayDate: dateText,
+          name: user.name,
+          className: user.className,
+          status: "Hadir",
+          note: "QR dipindai pada perangkat ini",
+        });
+        await refreshAttendance();
+        setDbError("");
+        setFeedback("Absensi HADIR berhasil dicatat pada perangkat ini.");
+        return true;
+      } catch (error) {
+        setDbError(`Absensi tidak dapat dicatat: ${error.message}`);
+        return false;
+      } finally {
+        setIsSavingAttendance(false);
+      }
+    }
     setIsSavingAttendance(true);
     try {
       const serverRecord = await sendAttendanceToServer({
@@ -241,6 +258,7 @@ function AuthenticatedApp({ user, onLogout }) {
       )}
 
       <main className="main min-h-screen">
+        {isDemo && <div className="demo-banner" role="status">QR memakai data contoh lokal. Catatan absensi belum dikirim ke server sekolah.</div>}
         <header className="topbar">
           <div className="topbar-title">
             <button
@@ -259,7 +277,6 @@ function AuthenticatedApp({ user, onLogout }) {
           <div className="profile">
             <div className="profile-text">Halo, {user.name}<small>{user.role === "admin" ? "Administrator" : `${user.className} · ${dateText}`}</small></div>
             <div className="avatar" aria-hidden="true">ðŸ§‘â€ðŸŽ“</div>
-            <button className="logout-button" onClick={onLogout} type="button">Keluar</button>
           </div>
         </header>
 
@@ -277,7 +294,9 @@ function AuthenticatedApp({ user, onLogout }) {
         )}
 
         {page === "beranda" && (
-          <HomePage
+            <HomePage
+            user={user}
+            qrImage={qrImages[user.attendanceCode]}
             availableBooks={availableBooks}
             attendanceCount={attendanceRecords.length}
             pendingTasks={pendingTasks}
@@ -298,6 +317,7 @@ function AuthenticatedApp({ user, onLogout }) {
             onQrImage={handleQrImage}
             isSaving={isSavingAttendance}
             dbReady={dbReady}
+            isLocalOnly={isDemo}
           />
         )}
         {page === "akun" && user.role === "admin" && <AdminStudentsPage />}
@@ -324,43 +344,6 @@ function AuthenticatedApp({ user, onLogout }) {
         {page === "pengumuman" && <AnnouncementsPage />}
       </main>
     </div>
-  );
-}
-
-function LoginPage({ onLogin, serverMessage }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  async function submit(event) {
-    event.preventDefault();
-    setSubmitting(true);
-    setError("");
-    try {
-      await onLogin(username, password);
-    } catch (loginError) {
-      setError(loginError.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <main className="auth-page">
-      <section className="panel auth-card">
-        <div className="brand-mark" aria-hidden="true">✦</div>
-        <h1>Masuk Modul Siswa</h1>
-        <p>Gunakan akun sekolahmu untuk membuka fitur sesuai peran.</p>
-        {serverMessage && <div className="error-banner" role="alert">{serverMessage}</div>}
-        {error && <div className="error-banner" role="alert">{error}</div>}
-        <form className="auth-form" onSubmit={submit}>
-          <label>Username<input className="task-input" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label>
-          <label>Kata sandi<input className="task-input" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-          <button className="primary-button" type="submit" disabled={submitting}>{submitting ? "Memeriksa…" : "Masuk"}</button>
-        </form>
-      </section>
-    </main>
   );
 }
 
@@ -426,7 +409,7 @@ function AdminStudentsPage() {
   );
 }
 
-function HomePage({ availableBooks, attendanceCount, pendingTasks, onNavigate }) {
+function HomePage({ user, qrImage, availableBooks, attendanceCount, pendingTasks, onNavigate }) {
   const lessons = schedules[todayName].slice(0, 3);
   return (
     <section>
@@ -446,6 +429,16 @@ function HomePage({ availableBooks, attendanceCount, pendingTasks, onNavigate })
         <StatCard icon="âœ…" color="teal" value={attendanceCount} label="Catatan absensi" />
         <StatCard icon="ðŸ“" color="orange" value={pendingTasks} label="Tugas belum selesai" />
         <StatCard icon="ðŸ“¢" color="blue" value={announcements.length} label="Pengumuman" />
+      </div>
+      <div className="panel student-identity-panel home-qr-panel">
+        <div className="home-qr-copy">
+          <h3>QR Absensi Siswa</h3>
+          <p>{user.name} · {user.className}</p>
+          <small>Tunjukkan QR ini kepada petugas saat hadir di sekolah.</small>
+          <button className="secondary-button" onClick={() => onNavigate("absensi")} type="button">Buka menu Absensi</button>
+        </div>
+        {qrImage ? <img className="student-qr student-qr-large" src={qrImage} alt={`Kode QR ${user.name}`} /> : <span>Membuat QR…</span>}
+        {qrImage && <a className="text-link" href={qrImage} download={`qr-${user.username}.png`}>Unduh QR</a>}
       </div>
       <div className="section-title">
         <div>
@@ -535,7 +528,7 @@ function SchedulePage({ activeDay, onSelectDay }) {
   );
 }
 
-function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidationError, qrImages, onQrImage, isSaving, dbReady }) {
+function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidationError, qrImages, onQrImage, isSaving, dbReady, isLocalOnly }) {
   const [scanCode, setScanCode] = useState("");
   const [absenceStatus, setAbsenceStatus] = useState("Sakit");
   const [absenceNote, setAbsenceNote] = useState("");
@@ -557,7 +550,7 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
   }, [qrValue, qrImages, onQrImage]);
 
   useEffect(() => {
-    if (!cameraActive || !isAdmin) return undefined;
+    if (!cameraActive) return undefined;
     let controls;
     let stopped = false;
     setCameraError("");
@@ -596,7 +589,7 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
           <span className="guide-icon" aria-hidden="true">▦</span>
           <div>
             <h3>Absensi digital dengan QR pribadi</h3>
-            <p>Admin memindai QR untuk mencatat HADIR. Siswa menggunakan akunnya sendiri untuk melihat QR dan mengirim surat keterangan. Riwayat dibatasi sesuai peran akun.</p>
+            <p>Pindai QR siswa untuk mencatat HADIR. Siswa juga dapat melihat kartu identitas digital dan riwayat absensi.</p>
           </div>
         </div>
       </div>
@@ -626,8 +619,25 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
             {qrValue && qrImages[qrValue] && <a className="text-link" href={qrImages[qrValue]} download={`qr-${user.username}.png`}>Unduh QR</a>}
           </div>
           <div className="panel workflow-panel">
+            <div className="panel-heading"><h3>Pindai QR untuk mencatat HADIR</h3><span>{dateText}</span></div>
+            <div className="camera-controls">
+              <button className="secondary-button" disabled={!dbReady || isSaving} onClick={() => setCameraActive((active) => !active)} type="button">{cameraActive ? "Matikan kamera" : "Buka kamera"}</button>
+              <span>Izinkan akses kamera. Arahkan kamera ke QR kartu siswa.</span>
+            </div>
+            {cameraError && <p className="camera-error" role="alert">{cameraError}</p>}
+            {cameraActive && <video className="qr-camera" ref={videoRef} muted playsInline aria-label="Tampilan kamera pemindai QR" />}
+            <form className="scan-form" onSubmit={async (event) => {
+              event.preventDefault();
+              const recorded = await onScanCode(scanCode);
+              if (recorded) setScanCode("");
+            }}>
+              <input className="task-input" value={scanCode} onChange={(event) => setScanCode(event.target.value)} placeholder="Pindai QR USB atau masukkan kode" aria-label="Kode QR siswa" required />
+              <button className="primary-button" disabled={!dbReady || isSaving} type="submit">{isSaving ? "Mencatat..." : "Catat Hadir"}</button>
+            </form>
+          </div>
+          <div className="panel workflow-panel">
             <div className="panel-heading"><h3>Kirim surat izin atau sakit</h3></div>
-            <p className="workflow-help">Status dan bukti akan tersimpan di server sekolah. Berkas PDF/JPG/PNG/WebP, maksimal 5 MB.</p>
+            <p className="workflow-help">{isLocalOnly ? "Pengiriman surat memerlukan koneksi ke server sekolah." : "Status dan bukti akan tersimpan di server sekolah."} Berkas PDF/JPG/PNG/WebP, maksimal 5 MB.</p>
             <form className="absence-form" onSubmit={async (event) => {
               event.preventDefault();
               const saved = await onSubmitAbsence(absenceStatus, absenceNote, proofFile);
@@ -655,7 +665,7 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
         </div>
       )}
       <div className="section-title">
-        <div><h2>{isAdmin ? "Riwayat Absensi Sekolah" : "Riwayat Absensiku"}</h2><p>Data dimuat dari database sekolah dan dibatasi sesuai peran akun.</p></div>
+        <div><h2>{isAdmin ? "Riwayat Absensi Sekolah" : "Riwayat Absensiku"}</h2><p>{isLocalOnly ? "Catatan demo tersimpan di perangkat ini." : "Data dimuat dari database sekolah dan dibatasi sesuai peran akun."}</p></div>
       </div>
       <div className="panel">
         <div className="table-wrap">

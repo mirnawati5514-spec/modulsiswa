@@ -213,6 +213,7 @@ td { border-top: 1px solid #f0f1f6; padding: 13px; font-size: 12px; }
 .mobile-menu { display: none; border: 0; background: transparent; color: var(--ink); font-size: 21px; }
 .mobile-backdrop { display: none; }
 .error-banner, .success-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; border-radius: 12px; padding: 11px 14px; font-size: 12px; }
+.demo-banner { margin: 0 0 14px; border: 1px solid #f0d48b; border-radius: 12px; padding: 11px 14px; background: #fff8df; color: #715318; font-size: 12px; }
 .error-banner { background: #fff0f0; color: #a83535; }
 .success-banner { background: var(--teal-soft); color: #147b65; }
 .error-banner button, .success-banner button { border: 0; background: transparent; color: inherit; font-size: 18px; }
@@ -233,6 +234,9 @@ td { border-top: 1px solid #f0f1f6; padding: 13px; font-size: 12px; }
 .student-identity-panel p { margin: 0 0 4px; font-size: 12px; font-weight: 700; }
 .student-identity-panel small { color: var(--muted); font-size: 10px; }
 .student-qr-large { width: 180px; height: 180px; margin-left: auto; }
+.home-qr-panel { margin: 18px 0 25px; }
+.home-qr-copy { display: grid; gap: 7px; }
+.home-qr-copy .secondary-button { justify-self: start; margin-top: 5px; }
 
 @media (max-width: 1050px) {
   .main { padding-right: 24px; padding-left: 24px; }
