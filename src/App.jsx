@@ -1,17 +1,16 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { db, initializeDatabase, recordStudentAttendance } from "./db.js";
-import QRCode from "qrcode";
 import { createStudentOnServer, fetchAttendanceFromServer, fetchStudentsFromServer, sendAttendanceToServer } from "./attendanceApi.js";
-import { announcements, books, schedules, weekdays } from "./data.js";
+import { announcements, books, schedules, students, weekdays } from "./data.js";
 
 const pages = [
-  ["beranda", "Beranda", "ðŸ "],
-  ["jadwal", "Jadwal Pelajaran", "ðŸ“…"],
-  ["absensi", "Absensi", "ðŸ“‹"],
-  ["tugas", "Daftar Tugas", "ðŸ“"],
-  ["perpustakaan", "Perpustakaan", "ðŸ“š"],
-  ["pengumuman", "Pengumuman", "ðŸ“¢"],
-  ["akun", "Akun Siswa", "ðŸ‘¥"],
+  ["beranda", "Beranda", "🏠"],
+  ["jadwal", "Jadwal Pelajaran", "📅"],
+  ["absensi", "Absensi", "📋"],
+  ["tugas", "Daftar Tugas", "📝"],
+  ["perpustakaan", "Perpustakaan", "📚"],
+  ["pengumuman", "Pengumuman", "📢"],
+  ["akun", "Akun Siswa", "👥"],
 ];
 const grades = [
   { number: "10", roman: "X" },
@@ -62,23 +61,11 @@ function AuthenticatedApp({ user, isDemo }) {
   const [dbError, setDbError] = useState("");
   const [feedback, setFeedback] = useState("");
   const [isSavingAttendance, setIsSavingAttendance] = useState(false);
-  const [qrImages, setQrImages] = useState({});
   useEffect(() => {
     if (!feedback) return undefined;
     const timer = window.setTimeout(() => setFeedback(""), 2600);
     return () => window.clearTimeout(timer);
   }, [feedback]);
-  const handleQrImage = useCallback((code, image) => {
-    setQrImages((current) => current[code] ? current : ({ ...current, [code]: image }));
-  }, []);
-
-  useEffect(() => {
-    if (!user.attendanceCode || qrImages[user.attendanceCode]) return;
-    QRCode.toDataURL(user.attendanceCode, { width: 220, margin: 1, errorCorrectionLevel: "M" })
-      .then((image) => handleQrImage(user.attendanceCode, image))
-      .catch(() => setDbError("Gambar QR tidak dapat dibuat."));
-  }, [user.attendanceCode, qrImages, handleQrImage]);
-
   useEffect(() => {
     let cancelled = false;
     async function loadDatabase() {
@@ -175,8 +162,9 @@ function AuthenticatedApp({ user, isDemo }) {
 
   async function recordAttendance(attendanceCode, status, extra = {}) {
     if (isDemo) {
-      if (status !== "Hadir" || attendanceCode?.trim() !== user.attendanceCode) {
-        setDbError("Kode QR tidak sesuai dengan kartu siswa contoh.");
+      const student = students.find((entry) => entry.attendanceCode === attendanceCode?.trim());
+      if (status !== "Hadir" || !student) {
+        setDbError("Kode QR siswa tidak dikenali. Coba scan kembali.");
         return false;
       }
       setIsSavingAttendance(true);
@@ -190,14 +178,14 @@ function AuthenticatedApp({ user, isDemo }) {
           displayDate: scannedDateText,
           time: scannedTimeText,
           scannedAt: scannedAt.toISOString(),
-          name: user.name,
-          className: user.className,
+          name: student.name,
+          className: student.className,
           status: "Hadir",
           note: "QR dipindai pada perangkat ini",
         });
         await refreshAttendance();
         setDbError("");
-        setFeedback(`✅ Tersimpan: HADIR — ${user.name} — ${scannedTimeText}`);
+        setFeedback(`✅ Tersimpan: HADIR — ${student.name} — ${scannedTimeText}`);
         return true;
       } catch (error) {
         setDbError(`Absensi tidak dapat dicatat: ${error.message}`);
@@ -231,9 +219,35 @@ function AuthenticatedApp({ user, isDemo }) {
     return recordAttendance(code.trim(), "Hadir");
   }
 
-  async function submitAbsence(status, note, proof) {
-    if (!proof) return false;
-    return recordAttendance(null, status, { note: note.trim(), proof });
+  async function saveDailyAttendance(statuses) {
+    setIsSavingAttendance(true);
+    try {
+      const savedAt = new Date();
+      const date = `${savedAt.getFullYear()}-${String(savedAt.getMonth() + 1).padStart(2, "0")}-${String(savedAt.getDate()).padStart(2, "0")}`;
+      const displayDate = new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric" }).format(savedAt);
+      const time = new Intl.DateTimeFormat("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(savedAt);
+      for (const student of students) {
+        await recordStudentAttendance({
+          date,
+          displayDate,
+          time,
+          scannedAt: savedAt.toISOString(),
+          name: student.name,
+          className: student.className,
+          status: statuses[student.attendanceCode] || "Hadir",
+          note: "Dicatat pada perangkat ini",
+        });
+      }
+      await refreshAttendance();
+      setDbError("");
+      setFeedback(`✅ Absensi hari ini tersimpan — ${time}`);
+      return true;
+    } catch (error) {
+      setDbError(`Absensi tidak dapat disimpan: ${error.message}`);
+      return false;
+    } finally {
+      setIsSavingAttendance(false);
+    }
   }
 
   return (
@@ -243,7 +257,7 @@ function AuthenticatedApp({ user, isDemo }) {
         aria-label="Navigasi utama"
       >
         <div className="brand">
-          <div className="brand-mark" aria-hidden="true">âœ¦</div>
+          <div className="brand-mark" aria-hidden="true">✦</div>
           <div className="brand-name">
             Modul Siswa<span>SEKOLAH CERDAS</span>
           </div>
@@ -263,7 +277,7 @@ function AuthenticatedApp({ user, isDemo }) {
           ))}
         </nav>
         <div className="sidebar-note">
-          <strong>ðŸŒŸ Semangat belajar!</strong>
+          <strong>🌟 Semangat belajar!</strong>
           Langkah kecil setiap hari membawa hasil yang luar biasa.
         </div>
       </aside>
@@ -277,7 +291,6 @@ function AuthenticatedApp({ user, isDemo }) {
       )}
 
       <main className="main min-h-screen">
-        {isDemo && <div className="demo-banner" role="status">QR memakai data contoh lokal. Catatan absensi belum dikirim ke server sekolah.</div>}
         <header className="topbar">
           <div className="topbar-title">
             <button
@@ -286,7 +299,7 @@ function AuthenticatedApp({ user, isDemo }) {
               aria-label="Buka menu"
               type="button"
             >
-              â˜°
+              ☰
             </button>
             <div>
               <div className="breadcrumb">Modul Siswa <span aria-hidden="true">/</span> {currentPage[1]}</div>
@@ -294,28 +307,26 @@ function AuthenticatedApp({ user, isDemo }) {
             </div>
           </div>
           <div className="profile">
-            <div className="profile-text">Halo, {user.name}<small>{user.role === "admin" ? "Administrator" : `${user.className} · ${dateText}`}</small></div>
-            <div className="avatar" aria-hidden="true">ðŸ§‘â€ðŸŽ“</div>
+            <div className="profile-text">Halo, Siswa!<small>{dateText}</small></div>
+            <div className="avatar" aria-hidden="true">🧑‍🎓</div>
           </div>
         </header>
 
         {dbError && (
           <div className="error-banner" role="alert">
             <span>{dbError}</span>
-            <button onClick={() => setDbError("")} aria-label="Tutup pesan" type="button">Ã—</button>
+            <button onClick={() => setDbError("")} aria-label="Tutup pesan" type="button">×</button>
           </div>
         )}
         {feedback && (
           <div className="success-banner" role="status">
             <span>{feedback}</span>
-            <button onClick={() => setFeedback("")} aria-label="Tutup pesan" type="button">Ã—</button>
+            <button onClick={() => setFeedback("")} aria-label="Tutup pesan" type="button">×</button>
           </div>
         )}
 
         {page === "beranda" && (
             <HomePage
-            user={user}
-            qrImage={qrImages[user.attendanceCode]}
             availableBooks={availableBooks}
             attendanceCount={attendanceRecords.length}
             pendingTasks={pendingTasks}
@@ -328,15 +339,10 @@ function AuthenticatedApp({ user, isDemo }) {
         {page === "absensi" && (
           <AttendancePage
             records={attendanceRecords}
-            user={user}
             onScanCode={scanAttendanceCode}
-            onSubmitAbsence={submitAbsence}
-            onValidationError={setDbError}
-            qrImages={qrImages}
-            onQrImage={handleQrImage}
             isSaving={isSavingAttendance}
             dbReady={dbReady}
-            isLocalOnly={isDemo}
+            onSaveAttendance={saveDailyAttendance}
           />
         )}
         {page === "akun" && user.role === "admin" && <AdminStudentsPage />}
@@ -428,42 +434,26 @@ function AdminStudentsPage() {
   );
 }
 
-function HomePage({ user, qrImage, availableBooks, attendanceCount, pendingTasks, onNavigate }) {
+function HomePage({ availableBooks, attendanceCount, pendingTasks, onNavigate }) {
   const lessons = schedules[todayName].slice(0, 3);
   return (
     <section>
       <div className="welcome">
         <div className="welcome-copy">
-          <div className="welcome-kicker">SELAMAT DATANG DI MODUL SISWA âœ¨</div>
+          <div className="welcome-kicker">SELAMAT DATANG DI MODUL SISWA ✨</div>
           <h2>Belajar jadi lebih teratur!</h2>
           <p>
             Semua yang kamu butuhkan untuk hari sekolah yang produktif, ada di satu tempat.
             Yuk, mulai hari ini dengan semangat!
           </p>
         </div>
-        <div className="welcome-art" aria-hidden="true">ðŸŽ’</div>
-      </div>
-      <div className="panel student-identity-panel home-qr-panel">
-        <div className="home-qr-copy">
-          <span className="home-qr-kicker">ABSENSI SISWA</span>
-          <h3>Kartu QR Kehadiran</h3>
-          <p>{user.name} · {user.className}</p>
-          <small>Tunjukkan kode ini kepada petugas untuk mencatat kehadiran.</small>
-          <button className="primary-button home-qr-open" onClick={() => onNavigate("absensi")} type="button">Buka pemindai kamera</button>
-          {qrImage && <a className="text-link home-qr-download" href={qrImage} download={`qr-${user.username}.png`}>Unduh QR</a>}
-        </div>
-        {qrImage ? (
-          <button className="home-qr-code-action" onClick={() => onNavigate("absensi")} type="button" aria-label="Klik untuk membuka kamera pemindai absensi">
-            <img src={qrImage} alt={`Kode QR absensi ${user.name}`} />
-            <span>Klik untuk memindai</span>
-          </button>
-        ) : <div className="home-qr-loading">Membuat QR…</div>}
+        <div className="welcome-art" aria-hidden="true">🎒</div>
       </div>
       <div className="stats">
-        <StatCard icon="ðŸ“š" color="purple" value={availableBooks} label="Buku tersedia" />
-        <StatCard icon="âœ…" color="teal" value={attendanceCount} label="Catatan absensi" />
-        <StatCard icon="ðŸ“" color="orange" value={pendingTasks} label="Tugas belum selesai" />
-        <StatCard icon="ðŸ“¢" color="blue" value={announcements.length} label="Pengumuman" />
+        <StatCard icon="📚" color="purple" value={availableBooks} label="Buku tersedia" />
+        <StatCard icon="✅" color="teal" value={attendanceCount} label="Catatan absensi" />
+        <StatCard icon="📝" color="orange" value={pendingTasks} label="Tugas belum selesai" />
+        <StatCard icon="📢" color="blue" value={announcements.length} label="Pengumuman" />
       </div>
       <div className="section-title">
         <div>
@@ -474,12 +464,12 @@ function HomePage({ user, qrImage, availableBooks, attendanceCount, pendingTasks
       <div className="dashboard-grid">
         <div className="panel">
           <div className="panel-heading">
-            <h3>ðŸ“… Jadwal Pelajaran</h3>
-            <button className="text-link" onClick={() => onNavigate("jadwal")} type="button">Lihat jadwal â†’</button>
+            <h3>📅 Jadwal Pelajaran</h3>
+            <button className="text-link" onClick={() => onNavigate("jadwal")} type="button">Lihat jadwal →</button>
           </div>
           {lessons.map(([time, subject, teacher]) => (
             <div className="today-row" key={`${time}-${subject}`}>
-              <div className="subject-time">{time.split("â€“")[0]}</div>
+              <div className="subject-time">{time.split("–")[0]}</div>
               <div className="subject-dot" />
               <div className="subject-info">{subject}<small>{teacher}</small></div>
             </div>
@@ -487,8 +477,8 @@ function HomePage({ user, qrImage, availableBooks, attendanceCount, pendingTasks
         </div>
         <div className="panel">
           <div className="panel-heading">
-            <h3>ðŸ“¢ Pengumuman Terbaru</h3>
-            <button className="text-link" onClick={() => onNavigate("pengumuman")} type="button">Lihat semua â†’</button>
+            <h3>📢 Pengumuman Terbaru</h3>
+            <button className="text-link" onClick={() => onNavigate("pengumuman")} type="button">Lihat semua →</button>
           </div>
           {announcements.slice(0, 2).map((item) => (
             <div className="notice-row" key={item.title}>
@@ -553,26 +543,21 @@ function SchedulePage({ activeDay, onSelectDay }) {
   );
 }
 
-function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidationError, qrImages, onQrImage, isSaving, dbReady, isLocalOnly }) {
-  const [absenceStatus, setAbsenceStatus] = useState("Sakit");
-  const [absenceNote, setAbsenceNote] = useState("");
-  const [proofFile, setProofFile] = useState(null);
-  const proofInputRef = useRef(null);
+function AttendancePage({ records, onScanCode, onSaveAttendance, isSaving, dbReady }) {
   const videoRef = useRef(null);
   const scanHandlerRef = useRef(onScanCode);
   scanHandlerRef.current = onScanCode;
   const [cameraActive, setCameraActive] = useState(true);
   const [cameraError, setCameraError] = useState("");
   const processingScanRef = useRef(false);
-  const isAdmin = user.role === "admin";
-  const qrValue = user.attendanceCode;
-
+  const [statuses, setStatuses] = useState(() => Object.fromEntries(students.map((student) => [student.attendanceCode, "Hadir"])));
   useEffect(() => {
-    if (!qrValue || qrImages[qrValue]) return;
-    QRCode.toDataURL(qrValue, { width: 220, margin: 1, errorCorrectionLevel: "M" })
-      .then((image) => onQrImage(qrValue, image))
-      .catch(() => setCameraError("Gambar QR tidak dapat dibuat."));
-  }, [qrValue, qrImages, onQrImage]);
+    const todayRecords = records.filter((record) => record.date === dateKey);
+    setStatuses(Object.fromEntries(students.map((student) => {
+      const saved = todayRecords.find((record) => record.name === student.name);
+      return [student.attendanceCode, saved?.status || "Hadir"];
+    })));
+  }, [records]);
 
   useEffect(() => {
     if (!cameraActive) return undefined;
@@ -600,9 +585,7 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
         lastVisibleCode = code;
         lastVisibleAt = now;
         processingScanRef.current = true;
-        Promise.resolve(scanHandlerRef.current(code)).finally(() => {
-          processingScanRef.current = false;
-        });
+        Promise.resolve(scanHandlerRef.current(code)).finally(() => { processingScanRef.current = false; });
       }).then((startedControls) => {
         controls = startedControls;
         if (stopped) controls.stop();
@@ -617,98 +600,49 @@ function AttendancePage({ user, records, onScanCode, onSubmitAbsence, onValidati
       stopped = true;
       controls?.stop();
     };
-  }, [cameraActive, isAdmin]);
+  }, [cameraActive]);
 
   return (
     <section>
-      <div className="toolbar">
-        <div><h2>Absensi Siswa</h2><p>{isAdmin ? "Pindai QR siswa dan pantau catatan kehadiran." : "Lihat QR pribadimu dan kirim surat izin atau sakit."}</p></div>
-      </div>
-      <div className="attendance-guide">
-        <div className="guide-intro">
-          <span className="guide-icon" aria-hidden="true">▦</span>
-          <div>
-            <h3>Absensi digital dengan QR pribadi</h3>
-            <p>Kamera akan memindai QR otomatis. Saat QR dikenali, status HADIR langsung dicatat dan pemindai siap membaca QR berikutnya.</p>
-          </div>
-        </div>
-      </div>
-      {isAdmin ? (
+      <div className="toolbar"><div><h2>Absensi Siswa</h2><p>Pilih status kehadiran, atau scan QR untuk mencatat HADIR otomatis.</p></div></div>
+      <div className="attendance-workflow">
         <div className="panel workflow-panel">
-          <div className="panel-heading"><h3>Pindai QR untuk mencatat HADIR</h3><span>{dateText}</span></div>
+          <div className="panel-heading"><h3>Scan QR Otomatis</h3><span>{dateText}</span></div>
           <div className="camera-controls">
-            <button className="secondary-button" disabled={!dbReady || isSaving} onClick={() => setCameraActive((active) => !active)} type="button">{cameraActive ? "Matikan kamera" : "Buka kamera"}</button>
-            <span>Izinkan kamera. HTTPS diperlukan saat online; localhost boleh untuk uji coba.</span>
+            <button className="secondary-button" disabled={!dbReady || isSaving} onClick={() => setCameraActive((active) => !active)} type="button">{cameraActive ? "Jeda kamera" : "Mulai scan QR"}</button>
+            <span>Arahkan kamera ke QR siswa. Kehadiran tersimpan otomatis saat kode dikenali.</span>
           </div>
           {cameraError && <p className="camera-error" role="alert">{cameraError}</p>}
-          {cameraActive && <video className="qr-camera" ref={videoRef} muted playsInline aria-label="Tampilan kamera pemindai QR" />}
+          {cameraActive && <video className="qr-camera" ref={videoRef} muted playsInline aria-label="Kamera pemindai QR absensi" />}
         </div>
-      ) : (
-        <div className="attendance-workflow">
-          <div className="panel student-identity-panel">
-            <div><h3>Kartu identitas digital</h3><p>{user.name} · {user.className}</p><small>Tunjukkan QR ini kepada petugas saat datang ke sekolah.</small></div>
-            {qrValue && qrImages[qrValue] ? <img className="student-qr student-qr-large" src={qrImages[qrValue]} alt={`Kode QR ${user.name}`} /> : <span>Membuat QR…</span>}
-            {qrValue && qrImages[qrValue] && <a className="text-link" href={qrImages[qrValue]} download={`qr-${user.username}.png`}>Unduh QR</a>}
-          </div>
-          <div className="panel workflow-panel">
-            <div className="panel-heading"><h3>Pindai QR untuk mencatat HADIR</h3><span>{dateText}</span></div>
-            <div className="camera-controls">
-              <button className="secondary-button" disabled={!dbReady || isSaving} onClick={() => setCameraActive((active) => !active)} type="button">{cameraActive ? "Matikan kamera" : "Buka kamera"}</button>
-              <span>Izinkan akses kamera. Arahkan kamera ke QR kartu siswa.</span>
-            </div>
-            {cameraError && <p className="camera-error" role="alert">{cameraError}</p>}
-            {cameraActive && <video className="qr-camera" ref={videoRef} muted playsInline aria-label="Tampilan kamera pemindai QR" />}
-          </div>
-          <div className="panel workflow-panel">
-            <div className="panel-heading"><h3>Kirim surat izin atau sakit</h3></div>
-            <p className="workflow-help">{isLocalOnly ? "Pengiriman surat memerlukan koneksi ke server sekolah." : "Status dan bukti akan tersimpan di server sekolah."} Berkas PDF/JPG/PNG/WebP, maksimal 5 MB.</p>
-            <form className="absence-form" onSubmit={async (event) => {
-              event.preventDefault();
-              const saved = await onSubmitAbsence(absenceStatus, absenceNote, proofFile);
-              if (!saved) return;
-              setAbsenceNote("");
-              setProofFile(null);
-              if (proofInputRef.current) proofInputRef.current.value = "";
-            }}>
-              <label>Status<select className="class-filter" value={absenceStatus} onChange={(event) => setAbsenceStatus(event.target.value)}><option value="Sakit">Sakit</option><option value="Izin">Izin</option></select></label>
-              <label className="absence-note">Keterangan<input className="task-input" value={absenceNote} onChange={(event) => setAbsenceNote(event.target.value)} placeholder="Contoh: demam" required /></label>
-              <label className="absence-proof">Surat keterangan<input ref={proofInputRef} type="file" accept="image/jpeg,image/png,image/webp,.pdf" onChange={(event) => {
-                const file = event.target.files?.[0] || null;
-                if (file && file.size > 5 * 1024 * 1024) {
-                  setProofFile(null);
-                  event.target.value = "";
-                  onValidationError("Ukuran surat maksimal 5 MB.");
-                  return;
-                }
-                setProofFile(file);
-                onValidationError("");
-              }} required /><small>Format PDF, JPG, PNG, atau WebP; maksimal 5 MB.</small></label>
-              <button className="primary-button absence-submit" disabled={!dbReady || isSaving || !proofFile} type="submit">{isSaving ? "Mengirim..." : "Kirim surat"}</button>
-            </form>
-          </div>
-        </div>
-      )}
-      <div className="section-title">
-        <div><h2>{isAdmin ? "Riwayat Absensi Sekolah" : "Riwayat Absensiku"}</h2><p>{isLocalOnly ? "Catatan demo tersimpan di perangkat ini." : "Data dimuat dari database sekolah dan dibatasi sesuai peran akun."}</p></div>
       </div>
       <div className="panel">
+        <div className="panel-heading"><h3>📋 Catat Kehadiran</h3><span>{dateText}</span></div>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>TANGGAL &amp; WAKTU</th>{isAdmin && <th>NAMA SISWA</th>}<th>KELAS</th><th>STATUS</th><th>KETERANGAN</th></tr></thead>
-            <tbody>
-              {records.length ? records.map((record) => (
-                <tr key={record.id}>
-                  <td><div>{record.displayDate || record.date}</div>{record.time && <small className="attendance-time-display">{record.time}</small>}</td>
-                  {isAdmin && <td>{record.name}</td>}
-                  <td>{record.className}</td>
-                  <td><span className={`badge ${record.status.toLowerCase()}`}>{record.status}</span></td>
-                  <td>{record.proofName ? <div className="attendance-proof-history"><span>{record.note}</span><a href={record.proofUrl || undefined} target="_blank" rel="noreferrer">{record.proofName}</a></div> : record.note || "—"}</td>
-                </tr>
-              )) : <tr><td className="empty-state" colSpan={isAdmin ? 5 : 4}>Belum ada catatan absensi.</td></tr>}
-            </tbody>
+            <thead><tr><th>NAMA SISWA</th><th>KELAS</th><th>STATUS</th></tr></thead>
+            <tbody>{students.map((student) => (
+              <tr key={student.attendanceCode}>
+                <td><div className="student-cell"><span className="student-avatar">{student.icon}</span>{student.name}</div></td>
+                <td>{student.className}</td>
+                <td><select className="status-select" value={statuses[student.attendanceCode] || "Hadir"} onChange={(event) => setStatuses((current) => ({ ...current, [student.attendanceCode]: event.target.value }))} aria-label={`Status ${student.name}`}>
+                  <option>Hadir</option><option>Izin</option><option>Sakit</option><option>Alpa</option>
+                </select></td>
+              </tr>
+            ))}</tbody>
           </table>
         </div>
+        <div className="attendance-actions"><button className="primary-button" disabled={!dbReady || isSaving} onClick={() => onSaveAttendance(statuses)} type="button">{isSaving ? "Menyimpan..." : "Simpan Absensi Hari Ini"}</button></div>
       </div>
+      <div className="section-title"><div><h2>Riwayat Absensi</h2><p>Catatan tersimpan di perangkat ini dan bisa dilihat kembali.</p></div></div>
+      <div className="panel"><div className="table-wrap">
+        <table>
+          <thead><tr><th>TANGGAL</th><th>NAMA SISWA</th><th>KELAS</th><th>STATUS</th></tr></thead>
+          <tbody>{records.length ? records.map((record) => (
+            <tr key={record.id}><td><div>{record.displayDate || record.date}</div>{record.time && <small className="attendance-time-display">{record.time}</small>}</td><td>{record.name}</td><td>{record.className}</td><td><span className={`badge ${record.status.toLowerCase()}`}>{record.status}</span></td></tr>
+          )) : <tr><td colSpan="4" className="empty-state">Belum ada catatan absensi. Scan QR atau simpan absensi hari ini untuk memulai.</td></tr>}</tbody>
+        </table>
+      </div></div>
     </section>
   );
 }
@@ -747,7 +681,7 @@ function TasksPage({ tasks, taskInput, dbReady, onInput, onAdd, onToggle, onDele
             <span className={`task-text ${task.done ? "done" : ""}`}>{task.text}</span>
             <button className="delete-button" onClick={() => onDelete(task.id)} aria-label={`Hapus ${task.text}`} type="button">Hapus</button>
           </div>
-        )) : dbReady ? <div className="panel empty-state">Belum ada tugas. Tambahkan tugas pertamamu di atas! âœ¨</div> : null}
+        )) : dbReady ? <div className="panel empty-state">Belum ada tugas. Tambahkan tugas pertamamu di atas! ✨</div> : null}
       </div>
     </section>
   );
@@ -768,7 +702,7 @@ function LibraryPage({ books: visibleBooks, query, selectedGrade, onQuery, onGra
           <input
             className="search-input"
             type="search"
-            placeholder="ðŸ”Ž  Cari buku..."
+            placeholder="🔎  Cari buku..."
             aria-label="Cari buku"
             value={query}
             onChange={(event) => onQuery(event.target.value)}
